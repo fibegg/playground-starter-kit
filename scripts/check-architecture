@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+domain_dir="crates/domain/src"
+
+if [[ ! -d "$domain_dir" ]]; then
+  echo "missing domain crate at $domain_dir"
+  exit 1
+fi
+
+forbidden=(
+  "axum::"
+  "async_graphql::"
+  "sqlx::"
+  "redis::"
+  "reqwest::"
+  "tokio::"
+  "tower::"
+  "tracing::"
+  "std::env"
+  "dotenv"
+  "DATABASE_URL"
+  "REDIS_URL"
+)
+
+violations=()
+for term in "${forbidden[@]}"; do
+  while IFS= read -r file; do
+    violations+=("$file: forbidden dependency/reference: $term")
+  done < <(grep -RIl -- "$term" "$domain_dir" || true)
+done
+
+if (( ${#violations[@]} > 0 )); then
+  printf "%s\n" "${violations[@]}"
+  exit 1
+fi
+
+echo "architecture ok"

@@ -1,0 +1,12 @@
+title = "Rust Axum React Starter Kit"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated local build artifacts"
+paths = [
+  '''^frontend/dist/''',
+  '''^frontend/node_modules/''',
+  '''^target/''',
+]

@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+run() {
+  local label="$1"
+  shift
+  printf "\n==> %s\n" "$label"
+  "$@"
+}
+
+run_if_available() {
+  local tool="$1"
+  local label="$2"
+  shift 2
+  if command -v "$tool" >/dev/null 2>&1; then
+    run "$label" "$@"
+  else
+    printf "\n==> %s\nskip: %s is not installed\n" "$label" "$tool"
+  fi
+}
+
+cargo_audit() {
+  local args=()
+
+  # sqlx publishes optional MySQL macro dependencies into Cargo.lock even when this
+  # Postgres-only app does not enable or resolve them. cargo-audit scans the full
+  # lockfile, so ignore the rsa advisory only while rsa is absent from the active
+  # dependency tree.
+  if cargo tree -i rsa --target all 2>&1 | grep -q "nothing to print"; then
+    args+=(--ignore RUSTSEC-2023-0071)
+  fi
+
+  cargo audit "${args[@]}"
+}
+
+run "Architecture" bash scripts/check-architecture
+run "Rust format" cargo fmt --all --check
+run "Rust clippy" cargo clippy --workspace --all-targets --all-features -- -D warnings
+run "Rust tests" cargo test --workspace --all-targets
+
+run_if_available cargo-deny "Rust dependency policy" cargo deny check
+run_if_available cargo-audit "Rust advisory audit" cargo_audit
+run_if_available cargo-machete "Rust unused dependency scan" cargo machete
+
+if command -v cargo-sqlx >/dev/null 2>&1 && [[ -n "${DATABASE_URL:-}" ]]; then
+  run "SQLx offline metadata check" cargo sqlx prepare --workspace --check
+else
+  printf "\n==> SQLx offline metadata check\nskip: cargo-sqlx or DATABASE_URL is unavailable\n"
+fi
+
+run "Frontend install" npm --prefix frontend ci
+run "Frontend typecheck" npm --prefix frontend run typecheck
+run "Frontend lint" npm --prefix frontend run lint
+run "Frontend build" npm --prefix frontend run build
+run "Frontend audit" npm --prefix frontend audit --audit-level=moderate
+
+run "Docker Compose config" bash -c 'docker compose config >/dev/null'
+run_if_available shellcheck "Shell scripts" shellcheck scripts/check scripts/check-architecture bin/docker-entrypoint
+run_if_available actionlint "GitHub Actions lint" actionlint
+run_if_available hadolint "Dockerfile lint" hadolint Dockerfile Dockerfile.dev
+run_if_available dotenv-linter "Env file lint" dotenv-linter check env.example
+run_if_available gitleaks "Secret scan" gitleaks detect --no-git --source .
